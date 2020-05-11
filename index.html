@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TRASH Editor</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <style type="text/css">
+        body {
+            margin: 0 2em;
+        }
+        #app {
+            margin: 0 2em;
+            border: 1px solid black;
+        }
+        .toolbar {
+            display: flex;
+            box-sizing: border-box;
+            width: 100%;
+            padding-left: 0;
+            margin: 0.5ex;
+        }
+        .toolbar li {
+            box-sizing: border-box;
+            list-style: none;
+            width: 1.2em;
+            height: 1.2em;
+            margin: 0 0.2ex;
+            border: 1px solid black;
+            text-align: center;
+            cursor: pointer;
+        }
+        .toolbar li.tool-link span {
+            display: inline-block;
+            transform: rotate(45deg);
+        }
+        .toolbar li.tool-switch {
+            margin-left: auto;
+            margin-right: 1ex;
+            line-height: 1.2em;
+        }
+        .editor > * {
+            display: inline-block;
+            vertical-align: top;
+            box-sizing: border-box;
+            width: 100%;
+            min-height: 220px;
+            font-size: 16px;
+            font-family: arial;
+            overflow: hidden;
+            padding: 0.5ex;
+            border-top: 1px solid black;
+        }
+        .editor > *:focus {
+            outline: 0;
+        }
+    </style>
+</head>
+<body>
+
+<h1><acronym title="Terribly Rudimentary, Absent Syntax Highlighting">TRASH</acronym> Editor</h1>
+
+<div id="app">
+    <toolbar :tools="tools"></toolbar>
+    <editor
+        :mode="mode"
+        :content.sync="content"
+    ></editor>
+</div>
+
+<script type="text/javascript">
+
+Vue.component('toolbar', {
+    props: ['tools'],
+    template: '<ol class="toolbar"><component\
+        v-for="tool in tools"\
+        :is="type(tool)"\
+        :key="tool.label"\
+        :tool="tool"\
+    ></component></ol>',
+    methods: {
+        type: function (tool) {
+            return tool.type || 'toolbar-tool';
+        }
+    }
+});
+
+var ToolbarToolMixin = {
+    props: ['tool'],
+    template: '<li :class="\'tool-\' + tool.label" :title="tool.label" v-on:click.prevent="exec" v-on:mousedown.prevent><span>{{tool.icon}}</span></li>',
+    methods: {
+        exec: function (event) {
+            document.execCommand( this.tool.command, false, this.tool.commandvalue || '' );
+        },
+        rangeSelected: function () {
+            return !window.getSelection().isCollapsed;
+        }
+    }
+};
+
+Vue.component('toolbar-tool', {
+    mixins: [ToolbarToolMixin]
+});
+Vue.component('toolbar-tool-link', {
+    mixins: [ToolbarToolMixin],
+    methods: {
+        exec: function (event) {
+            if (!this.rangeSelected()) {
+                return;
+            }
+            var url = prompt('URL?', 'http:\/\/');
+            if (url && url !== 'http:\/\/') {
+                document.execCommand( 'createLink', false, url );
+            }
+        }
+    }
+});
+Vue.component('toolbar-tool-switch', {
+    mixins: [ToolbarToolMixin],
+    methods: {
+        exec: function (event) {
+            this.$root.mode = this.$root.mode == 'visual' ? 'source' : 'visual';
+        }
+    }
+});
+
+Vue.component('editor', {
+    props: ['content', 'mode'],
+    template: '<div class="editor">\
+        <div contenteditable="true"\
+            v-html="content"\
+            @input="onInput"\
+            v-if="mode==\'visual\'"\
+            ref="contenteditable"\
+        ></div>\
+        <textarea\
+            v-text="content"\
+            @input="onInput"\
+            v-if="mode==\'source\'"\
+            ref="textarea"\
+        ></textarea>\
+    </div>',
+    beforeUpdate: function () {
+        // save selection
+        if ( this.mode === 'visual' && this.$refs.contenteditable ) {
+            var range = window.getSelection().getRangeAt(0);
+            var originalRange = range.cloneRange();
+            originalRange.selectNodeContents(this.$refs.contenteditable);
+            originalRange.setEnd(range.startContainer, range.startOffset);
+            var start = originalRange.toString().length;
+            this.selection = {
+                start: start,
+                end: start + range.toString().length
+            };
+        } else {
+            this.selection = false;
+        }
+    },
+    updated: function () {
+        // restore selection
+        if ( this.mode === 'visual' && this.selection ) {
+            var charIndex = 0, range = document.createRange();
+            range.setStart(this.$refs.contenteditable, 0);
+            range.collapse(true);
+            var nodeStack = [this.$refs.contenteditable], node, foundStart = false, stop = false;
+
+            while (!stop && (node = nodeStack.pop())) {
+                if (node.nodeType === 3) {
+                    var nextCharIndex = charIndex + node.length;
+                    if (!foundStart && this.selection.start >= charIndex && this.selection.start <= nextCharIndex) {
+                        range.setStart(node, this.selection.start - charIndex);
+                        foundStart = true;
+                    }
+                    if (foundStart && this.selection.end >= charIndex && this.selection.end <= nextCharIndex) {
+                        range.setEnd(node, this.selection.end - charIndex);
+                        stop = true;
+                    }
+                    charIndex = nextCharIndex;
+                } else {
+                    var i = node.childNodes.length;
+                    while (i--) {
+                        nodeStack.push(node.childNodes[i]);
+                    }
+                }
+            }
+
+            var selection = document.getSelection();
+            selection.removeAllRanges();
+            selection.addRange( range );
+        }
+    },
+    methods: {
+        onInput: function (event) {
+            var content, range;
+            if (this.mode === 'source') {
+                content = this.$refs.textarea.value;
+            } else {
+                content = this.$refs.contenteditable.innerHTML;
+            }
+            this.$emit('update:content', content);
+        }
+    },
+    data: function() {
+        return {
+            selection: false,
+        }
+    }
+});
+
+var app = new Vue({
+    el: '#app',
+    data: {
+        content: "Welcome to <i>this</i> editor",
+        mode: "visual",
+        selection: false,
+        tools: [
+            { label: 'bold', icon: 'B', command: 'bold' },
+            { label: 'italic', icon: 'I', command: 'italic' },
+            { label: 'strikethrough', icon: 'Ʉ', command: 'strikeThrough' },
+            { label: 'link', icon: '8', type: 'toolbar-tool-link' },
+            { label: 'switch', icon: '⇄', type: 'toolbar-tool-switch' },
+        ]
+    },
+    methods: {
+    }
+});
+
+</script>
+</body>
+</html>
